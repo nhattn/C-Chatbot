@@ -9,11 +9,17 @@ then
   mkdir -p $SRC
 fi
 
-if [ ! -d "$SRC/regexp9" ];
+if [ ! -d "$SRC/mregexp" ];
 then
-  echo "Clone regexp9 repo ..."
+  echo "Clone mregexp repo ..."
   cd $SRC
-  git clone https://github.com/tylov/regexp9
+  git clone https://github.com/tylov-fork/mregexp --branch faster-utf8 --single-branch mregexp
+fi
+
+if [ ! -d "$SRC/regexp9" ]; then
+    echo "Clone regexp9 repo ..."
+    cd $SRC
+    git clone https://github.com/tylov/regexp9
 fi
 
 if [ ! -d "$DEST" ];
@@ -30,73 +36,70 @@ cd $DEST
 
 echo "Create utf8.h header file ..."
 
+cp -rf $SRC/mregexp/mregexp.h regexp.h
+cp -rf $SRC/mregexp/mregexp.c regexp.c
+
 cat > utf8.h <<EOF
 #ifndef _UTF8_H
 #define _UTF8_H
 
-#include <stdio.h>
 EOF
 
-sed '1143,$d' $SRC/regexp9/utf8_tables.h | sed '1067,1107d' >> utf8.h
-sed '204,$d' $SRC/regexp9/regexp9.c | sed '1,177d' >> utf8.h
-sed -i 's/static int pushchar/static inline int pushchar/g' utf8.h
-sed -i 's/static int utf8_encode/static inline int utf8_encode/g' utf8.h
+sed '1143,$d' $SRC/regexp9/utf8_tables.h | sed '1067,$d' >> utf8.h
+sed '113,$d' regexp.c | sed '81,97d' | sed '1,35d' >> utf8.h
 echo '#endif' >> utf8.h
 
-echo "Copy regexp9.c -> regexp.c and regexp9.h -> regexp.h ..."
+sed -i 's/MRegexp/Regexp/g' regexp.h
+sed -i 's/MRegexp/Regexp/g' regexp.c
+sed -i 's/MREGEXP_/REGEXP_/g' regexp.h
+sed -i 's/MREGEXP_/REGEXP_/g' regexp.c
+sed -i 's/mregexp_/regexp_/g' regexp.h
+sed -i 's/mregexp_/regexp_/g' regexp.c
+sed -i 's/"mregexp\.h"/<regexp.h>/g' regexp.c
 
-cp -rf $SRC/regexp9/regexp9.h regexp.h
-cp -rf $SRC/regexp9/regexp9.c regexp.c
+sed '40,$d' regexp.h > a.c
+cat >> a.c <<EOF
+typedef enum {
+    REGEX_IGNORECASE,
+    REGEX_DOTALL
+} Reflags;
 
-echo "Modified regexp.h ..."
-
-sed '94,$d' regexp.h > a.h
-echo "const char * cregex_error(int code);" >> a.h
-echo "" >> a.h
-sed '1,93d' regexp.h >> a.h
-
-mv a.h regexp.h
-
-sed '38,$d' regexp.h > a.h
-echo "    creg_ok = 0," >> a.h
-sed '1,37d' regexp.h >> a.h
-mv a.h regexp.h
-
-echo "Modified regexp.c ..."
-
-sed -i 's/"regexp9\.h"/<regexp.h>/g' regexp.c
-sed -i 's/"utf8_tables\.h"/<utf8.h>/g' regexp.c
-sed -i '868,871d' regexp.c
-sed -i '862,864d' regexp.c
-sed -i '855,857d' regexp.c
-sed -i '587,627d' regexp.c
-sed -i '178,202d' regexp.c
-sed -i 's/1 + rx->prog->nsubids/rx->prog->nsubids/g' regexp.c
-sed -i 's/1 + rx.prog->nsubids/rx.prog->nsubids/g' regexp.c
-
-echo "Define function get error message from regex_error code ..."
-
-cat >> regexp.c <<EOF
-const char * cregex_error(int code) {
-    switch((cregex_error_t)code) {
-        case creg_nomatch: return "No match";
-        case creg_matcherror: return "Match error";
-        case creg_outofmemory: return "Out of memory";
-        case creg_unmatchedleftparenthesis: return "Unmatched left parenthesis";
-        case creg_unmatchedrightparenthesis: return "Unmatched right parenthesis";
-        case creg_toomanysubexpressions: return "Too many sub expressions";
-        case creg_toomanycharacterclasses: return "Too many character classes";
-        case creg_malformedcharacterclass: return "Malformed character class";
-        case creg_missingoperand: return "Missing operand";
-        case creg_unknownoperator: return "Unknown operator";
-        case creg_operandstackoverflow: return "Operand stackoverflow";
-        case creg_operatorstackoverflow: return "Operator stackoverflow";
-        case creg_operatorstackunderflow: return "Operator stack underflow";
-        case creg_ok: return NULL;
-        default: return "Unknown";
-    }
-}
 EOF
+sed '1,39d' regexp.h | sed '17,$d' >> a.c
+echo 'Regexp *regexp_compile(const char *re, Reflags flags);' >> a.c
+sed '1,56d' regexp.h | sed '22,$d' >> a.c
+
+sed '1,77d' regexp.h >> a.c
+mv a.c regexp.h
+
+sed '30,$d' regexp.c > a.c
+echo '#include <utf8.h>' >> a.c
+sed '1,30d' regexp.c | sed '68,83d' | sed '6,49d' | sed '15,16d' >> a.c
+mv a.c regexp.c
+
+sed '63,$d' regexp.c > a.c
+echo '    Reflags flags;' >> a.c
+sed '129,$d' regexp.c | sed '1,62d' >> a.c
+cat >> a.c <<EOF
+    uint32_t cp = utf8_peek(cur);
+    if(node->generic.flags == REGEX_IGNORECASE) {
+        return utf8_tolower(node->chr.chr) == utf8_tolower(cp);
+    }
+    return node->chr.chr == cp;
+EOF
+sed '1,129d' regexp.c >> a.c
+mv a.c regexp.c
+
+sed '798,$d' regexp.c > a.c
+echo 'Regexp *regexp_compile(const char *re, Reflags flags)' >> a.c
+sed '1,798d' regexp.c | sed '35,$d' >> a.c
+cat >> a.c <<EOF
+    for(RegexNode * p = nodes; p != NULL; p = p->generic.next) {
+        p->generic.flags = flags;
+    }
+EOF
+sed '1,832d' regexp.c >> a.c
+mv a.c regexp.c
 
 if [ ! -d "resources" ];
 then
@@ -310,27 +313,14 @@ const char * get_current_dir_name(void) {
     return NULL;
 }
 // https://github.com/sheredom/utf8.h/blob/master/utf8.h
-static int u8_ctx(const uint8_t * s, uint32_t * c) {
-    utf8_decode_t ctx = {UTF8_OK};
-    const uint8_t *b = s;
-    utf8_decode(&ctx, *b++);
-    switch(ctx.len) {
-        case 4: utf8_decode(&ctx, *b++);
-        case 3: utf8_decode(&ctx, *b++);
-        case 2: utf8_decode(&ctx, *b++);
-    }
-    if(c) {
-        *c = ctx.codep;
-    }
-    return ctx.len;
-}
-static uint8_t * u8_codepoint(const uint8_t * str, uint32_t *cp) {
-    int n = u8_ctx(str, cp);
+static uint8_t * utf8_codepoint(const uint8_t * str, uint32_t *cp) {
+    *cp = utf8_peek((const char *)str);
+    uint32_t n = utf8_char_width(*str);
     if(n == 0 || *cp == 0) return NULL;
     str += n;
     return (uint8_t *)str;
 }
-static uint8_t * u8_cat_codepoint(uint8_t * str, uint32_t chr, size_t n) {
+static uint8_t * utf8_cat_codepoint(uint8_t * str, uint32_t chr, size_t n) {
     if(0 == ((uint32_t)0xffffff80 & chr)) {
         if(n < 1) return NULL;
         str[0] = (uint8_t)chr;
@@ -356,7 +346,7 @@ static uint8_t * u8_cat_codepoint(uint8_t * str, uint32_t chr, size_t n) {
     }
     return str;
 }
-static size_t u8_codepoint_size(uint32_t chr) {
+static size_t utf8_codepoint_size(uint32_t chr) {
     if (0 == ((uint32_t)0xffffff80 & chr)) {
         return 1;
     } else if (0 == ((uint32_t)0xfffff800 & chr)) {
@@ -371,15 +361,15 @@ static size_t u8_codepoint_size(uint32_t chr) {
 static char * tranform_s(char * s, int mode) {
     uint8_t * str = (uint8_t*)s;
     uint32_t cp = 0;
-    uint8_t * pn = u8_codepoint(str, &cp);
+    uint8_t * pn = utf8_codepoint(str, &cp);
     while(cp != 0) {
         const uint32_t tranform_cp = mode ? utf8_toupper(cp) : utf8_tolower(cp);
-        const size_t size = u8_codepoint_size(tranform_cp);
+        const size_t size = utf8_codepoint_size(tranform_cp);
         if(tranform_cp != cp) {
-            u8_cat_codepoint(str, tranform_cp, size);
+            utf8_cat_codepoint(str, tranform_cp, size);
         }
         str = pn;
-        pn = u8_codepoint(str, &cp);
+        pn = utf8_codepoint(str, &cp);
     }
     return s;
 }
@@ -516,24 +506,6 @@ static uint32_t normal_non_tones(uint32_t cp, int lower) {
     }
     return lower == 0 ? cp : utf8_tolower(cp);
 }
-static inline uint32_t utf8_peek(const char *s)
-{
-    uint32_t cp = 0;
-	int n = u8_ctx((const uint8_t*)s, &cp);
-    if(n == 0 || cp == 0) return 0;
-    return cp;
-}
-
-static inline const char *utf8_next(const char *s)
-{
-	if (*s == 0)
-		return NULL;
-    uint32_t cp = 0;
-	int n = u8_ctx((const uint8_t*)s, &cp);
-    if(n == 0 || cp == 0) return NULL;
-    s += n;
-    return s;
-}
 static inline const char * utf8_at(const char * s, size_t index)
 {
     if(index == 0) return s;
@@ -559,15 +531,6 @@ static inline size_t utf8_strlen(const char * s) {
         s = utf8_next(s);
     }
     return len;
-}
-static inline uint32_t utf8_char_width(uint8_t c)
-{
-	// "optimal" branchless implementation...
-	uint32_t ret = (c < 0x80);        // 1
-	ret |= ((c & 0xE0) == 0xC0) << 1; // 2
-	ret |= ((c & 0xF0) == 0xE0) * 3;  // 3
-	ret |= ((c & 0xF8) == 0xF0) << 2; // 4
-	return ret;
 }
 int is_syllable(const char * s) {
     uint32_t cp = normal_non_tones(utf8_peek(s), 1);
@@ -1282,6 +1245,7 @@ echo "Create test file ..."
 cat > test.c <<EOF
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <util.h>
 #include <engine.h>
 #include <regexp.h>
@@ -1334,24 +1298,30 @@ int main() {
         save_repl_engine("a.lex", repl);
     }
     char * so = strdup("    Of course, the above function requires you to properly   terminate the string, which you currently do not.\n\nWhat the function above does   ");
-    printf("so=[%s]\n,sv=[%s]\n,sn=[%s]\n", so, uniquid_spaces(strdup(so),0), uniquid_spaces(strdup(so),1));
-    enum {N=15};
-    cregmatch_t m[N] = {0};
-    cregex_t rx;
-    int n;
-    if((n = cregex_compile(&rx, "oà([\\\\.,:;\\\\s$])", creg_dotall)) < 0) {
-        printf("regex error: %s\n", cregex_error(n));
-        return 1;
+    printf("so=[%s],\nsv=[%s],\nsn=[%s]\n", so, uniquid_spaces(strdup(so),0), uniquid_spaces(strdup(so),1));
+    char * text = strdup("anh hoà, đang làm.. gì 134/2. anh hoà, đang làm.. gì 134/2");
+    Regexp *re = regexp_compile("oà([\\\\.,:;\\\\s$])", REGEX_DOTALL);
+    if (regexp_error() || re == NULL) {
+        printf("Invalid regular expression: Compile failed with error %d\n",regexp_error());
+        return -1;
     }
-    char * s = strdup("anh hoà, đang làm.. gì 134/2. anh hoà, đang làm.. gì 134/2");
-    char * cp = s;
-    while((n = cregex_find(&rx, cp, N, m, 0)) >= 0) {
-        for(int i = 0; i < n; i++) {
-            printf("%d: (%.*s) %s\n", i, (int)m[i].len, m[i].str, m[i].str);
-            cp += m[i].str - s + m[i].len;
+    size_t caps = regexp_captures_len(re);
+    printf("Captures: %ld\n\n", caps);
+    RegexpMatch m;
+    char * p = text;
+    while (regexp_match(re, p, &m)) {
+        char * cap = (char *)calloc(m.match_end - m.match_begin + 1, sizeof(char));
+        strncpy(cap, p + m.match_begin, m.match_end - m.match_begin);
+        printf("Capture: %s\n", cap);
+        const RegexpMatch *cap0 = regexp_capture(re, 0);
+        if(cap0) {
+            char * capture = (char *)calloc(cap0->match_end - cap0->match_begin + 1, sizeof(char));
+            strncpy(capture, p + cap0->match_begin, cap0->match_end - cap0->match_begin);
+            printf("cap1=%s\n", capture);
         }
+        p += m.match_end;
     }
-    cregex_free(&rx);
+    regexp_free(re);
     return 0;
 }
 EOF
